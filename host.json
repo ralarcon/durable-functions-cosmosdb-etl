@@ -13,7 +13,7 @@
             "connectionMode": "Gateway",
             "protocol": "Https",
             "leaseOptions": {
-                "leasePrefix": "durableFuncPrefix"
+                "leasePrefix": "azfunc-etl-"
             }
         }
     }

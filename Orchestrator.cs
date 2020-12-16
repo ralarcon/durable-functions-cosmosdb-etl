@@ -26,7 +26,7 @@ namespace Ragc.Etl
         //  Improvements: every execution verify if it is needed to run (check the last excecution and verify if it was succeded, etc...)
         [FunctionName("Orchestration_Run")]
         public static async Task RunExtraction(
-            [TimerTrigger("0 */5 * * * *")] TimerInfo myTimer, ILogger log,
+            [TimerTrigger("0 */1 * * * *")] TimerInfo myTimer, ILogger log,
             [DurableClient] IDurableOrchestrationClient starter)
         {
             if (myTimer.IsPastDue)
@@ -98,7 +98,7 @@ namespace Ragc.Etl
             if (!olease.Locked)
             {
                 olease.Locked = true;
-                olease.PreferredLocations = Environment.GetEnvironmentVariable("PreferredLocations");
+                olease.Worker = $"{Environment.GetEnvironmentVariable("PreferredLocations")?.Split(",")[0]}";
                 olease.StartTime = DateTime.Now;
 
                 try
@@ -187,7 +187,7 @@ namespace Ragc.Etl
 
         [FunctionName("SaveDocuments")]
         public static async Task SaveDocumentsAsync([ActivityTrigger] IEnumerable<SampleItem> itemsIn,
-            [CosmosDB(databaseName: "documents", collectionName: "extracted", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true,
+            [CosmosDB(databaseName: "documents", collectionName: "extracted", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true, PartitionKey="/LogicalPartition",
             PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<SampleItem> itemsOut,
             ILogger log)
         {
@@ -197,6 +197,7 @@ namespace Ragc.Etl
             {
                 log.LogInformation($"Document Name={item.Name}");
                 item.Id = Guid.NewGuid();
+                item.LogicalPartition = itemsCount % 2 == 0 ? "A" : "B"; 
                 await itemsOut.AddAsync(item);
                 itemsCount++;
             }
@@ -206,11 +207,12 @@ namespace Ragc.Etl
         [FunctionName("TransformDocument")]
         public static async Task TransformDocumentAsync(
             [CosmosDBTrigger(databaseName: "documents", collectionName: "extracted", ConnectionStringSetting = "CosmosDbConnStr",
-            LeaseCollectionName = "transformLease",
+            LeaseCollectionName = "transformsLease",
             CreateLeaseCollectionIfNotExists=true,
+            MaxItemsPerInvocation=10, //TODO: ADJUST TO SCALING / COST / PERFORMANCE NEEDS --> Tests Required
             PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IReadOnlyList<Microsoft.Azure.Documents.Document> documents,
-            [CosmosDB(databaseName: "documents", collectionName: "transformed", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true,
-            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<SampleItem> itemsOut,
+            [CosmosDB(databaseName: "documents", collectionName: "transformed", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true, PartitionKey="/id",
+            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<TransformedItem> itemsOut,
             ILogger log)
         {
             log.LogInformation($"Transforming documents...");
@@ -220,15 +222,23 @@ namespace Ragc.Etl
             {
                 itemsCount++;
 
-                SampleItem item = JsonConvert.DeserializeObject<SampleItem>(document.ToString());
-
-                log.LogInformation($"Transforming item {item.Id}. Setting ");
-                item.UpdateLocation = Environment.GetEnvironmentVariable("PreferredLocations");
-                item.TransformData = $"Data added from transform function [{itemsCount}]";
-                item.TransformBatch = batchGuid;
-                await itemsOut.AddAsync(item);
+                SampleItem sourceItem = JsonConvert.DeserializeObject<SampleItem>(document.ToString());
+                TransformedItem targetItem = new TransformedItem(){
+                    Id = sourceItem.Id,
+                    SourceDate = sourceItem.Date,
+                    Description = String.IsNullOrWhiteSpace(sourceItem.Desc) ? $"Empty Description in source for item {sourceItem.Id}" : sourceItem.Desc,
+                    Name = String.IsNullOrWhiteSpace(sourceItem.Name) ? $"Empty Name in source for item {sourceItem.Id}" : sourceItem.Name,
+                    AdditionalData = $"Data added from transform function [{itemsCount}]",
+                    Done = sourceItem.Done,
+                    Pr = sourceItem.Pr,
+                    TransformBatch = batchGuid,
+                    UpdateLocation = Environment.GetEnvironmentVariable("PreferredLocations")?.Split(",")[0],
+                    TransformTimeStamp = DateTime.Now
+                };
+                log.LogInformation($"Transforming item {sourceItem.Id}");
+                await itemsOut.AddAsync(targetItem);
             }
-            log.LogInformation($"Transformed {itemsCount} items");
+            log.LogInformation($"Transformed {itemsCount} items.");
         }
     }
 }

@@ -12,7 +12,7 @@ namespace Ragc.Etl
         public DateTime EndTime {get; set;}
         public bool Succeeded {get; set;}
         public bool Locked {get; set;}
-        public string PreferredLocations {get; set;} //TODO: CHange by worker identification
+        public string Worker {get; set;}
         
         [JsonProperty(PropertyName = "_etag")]
         public string ETag {get; set;}
