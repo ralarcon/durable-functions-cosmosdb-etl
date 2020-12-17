@@ -1,0 +1,13 @@
+{
+    // To run locally, rename or duplicate this file as "local.settings.json" and set the correct values. You can use local emulators (for Storage and CosmosDB)
+    "IsEncrypted": false,
+    "Values": {
+      "AzureWebJobsStorage": "<StorageConnectionString>",
+      "FUNCTIONS_WORKER_RUNTIME": "dotnet",
+      "PreferredLocations":"West Europe,North Europe",
+      "CosmosDbConnStr":"<CosmosDB_ConnectionString>",
+      "ExternalEndpoint": "https://localhost/api/externaldocumentlist",
+      "ExternalEndpointParams": ""
+    }
+  }
+  
