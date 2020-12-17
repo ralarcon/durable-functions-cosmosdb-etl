@@ -10,7 +10,8 @@ namespace Ragc.Etl
         public string Id {get; set; } 
         public DateTime StartTime {get; set;}
         public DateTime EndTime {get; set;}
-        public bool Succeeded {get; set;}
+        public DateTime LeaseTimeOut {get; set;}
+        public bool LastLeaseTimedOut {get; set;}
         public bool Locked {get; set;}
         public string Worker {get; set;}
         
