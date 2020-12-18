@@ -17,8 +17,12 @@ using System.Text;
 
 namespace Ragc.Etl
 {
-    public static class Orchestrator
+    public static class EtlProcess
     {
+
+        private const string TriggerSchedule="0 */2 * * * *"; //each 2 minutes
+        private const int OrchestrationLeaseTimeOut = 5; //minutes - we don't expect any execution to last more than 5 minutes (actually it usually takes less than 1 minute -depending on how many docs are processed))
+
         private static CosmosClient _cosmosClient = new CosmosClient(Environment.GetEnvironmentVariable("CosmosDbConnStr"));
         private static Database _db = _cosmosClient.GetDatabase("documents");
 
@@ -26,8 +30,8 @@ namespace Ragc.Etl
         /// Considerations: We can have the orchestration being executed every, let say 5 mins. 
         //  Improvements: every execution verify if it is needed to run (check the last excecution and verify if it was succeded, etc...)
         [FunctionName("TriggerOrchestration")]
-        public static async Task RunExtraction(
-            [TimerTrigger("0 */1 * * * *")] TimerInfo myTimer, ILogger log,
+        public static async Task TriggerOrchestration(
+            [TimerTrigger(TriggerSchedule)] TimerInfo myTimer, ILogger log,
             [DurableClient] IDurableOrchestrationClient starter)
         {
             if (myTimer.IsPastDue)
@@ -94,7 +98,7 @@ namespace Ragc.Etl
         [FunctionName("ReleaseOrchestrationLease")]
         public static async Task ReleaseOrchestrationLeaseAsync([ActivityTrigger] (bool succeeded, string additonalInfo) info, 
         [CosmosDB(databaseName: "documents", collectionName: "orchestrationRuns", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true, PartitionKey="/id",
-            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=false )]IAsyncCollector<OrchestrationRun> runs,
+            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<OrchestrationRun> runs,
             ILogger log)
         {
             Container container = await _db.CreateContainerIfNotExistsAsync("orchestrationLease", "/id");
@@ -111,9 +115,10 @@ namespace Ragc.Etl
                 Id = Guid.NewGuid(),
                 StartTime = olease.StartTime,
                 EndTime = olease.EndTime,
+                Duration = (olease.EndTime - olease.StartTime).TotalSeconds,
                 ForcedLease = forcedLease,
                 Succeeded = info.succeeded,
-                Worker = olease.Worker,
+                OrchestrationWorker = olease.Worker,
                 AdditionlInfo = info.additonalInfo,
             });
         }
@@ -151,7 +156,7 @@ namespace Ragc.Etl
         [FunctionName("SaveDocuments")]
         public static async Task SaveDocumentsAsync([ActivityTrigger] IEnumerable<SampleItem> itemsIn,
             [CosmosDB(databaseName: "documents", collectionName: "extracted", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true, PartitionKey="/LogicalPartition",
-            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=false )]IAsyncCollector<SampleItem> itemsOut,
+            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<SampleItem> itemsOut,
             ILogger log)
         {
             log.LogInformation($"Saving items...");
@@ -160,7 +165,6 @@ namespace Ragc.Etl
             {
                 log.LogInformation($"Document Name={item.Name}");
                 item.Id = Guid.NewGuid();
-                item.LogicalPartition = itemsCount % 2 == 0 ? "A" : "B"; 
                 await itemsOut.AddAsync(item);
                 itemsCount++;
             }
@@ -173,9 +177,9 @@ namespace Ragc.Etl
             LeaseCollectionName = "transformsLease",
             CreateLeaseCollectionIfNotExists=true,
             MaxItemsPerInvocation=10, //TODO: ADJUST TO SCALING / COST / PERFORMANCE NEEDS --> Tests Required
-            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=false )]IReadOnlyList<Microsoft.Azure.Documents.Document> documents,
+            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IReadOnlyList<Microsoft.Azure.Documents.Document> documents,
             [CosmosDB(databaseName: "documents", collectionName: "transformed", ConnectionStringSetting = "CosmosDbConnStr", CreateIfNotExists = true, PartitionKey="/id",
-            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=false )]IAsyncCollector<TransformedItem> itemsOut,
+            PreferredLocations="%PreferredLocations%", UseMultipleWriteLocations=true )]IAsyncCollector<TransformedItem> itemsOut,
             ILogger log)
         {
             log.LogInformation($"Transforming documents...");
@@ -285,7 +289,7 @@ namespace Ragc.Etl
             olease.StartTime = DateTime.Now;
 
             //Set 5 minutes as time out for a process to finish (this is a sample)
-            olease.LeaseTimeOut = olease.StartTime.AddMinutes(5);
+            olease.LeaseTimeOut = olease.StartTime.AddMinutes(OrchestrationLeaseTimeOut);
 
             try
             {
