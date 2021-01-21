@@ -55,14 +55,21 @@ namespace Ragc.Etl
 
                 if (await context.CallActivityAsync<bool>("GetOrchestrationLease", null))
                 {
+                    string releaseMsg=String.Empty;
                     // Retrieve Data
                     var items = await context.CallActivityAsync<IEnumerable<SampleItem>>("ExtractDocuments", null);
-
-                    // SaveItems
-                    await context.CallActivityAsync<string>("SaveDocuments", items);
+                    if(items!=null){
+                        // SaveItems
+                        await context.CallActivityAsync<string>("SaveDocuments", items);
+                        releaseMsg = $"Successful extracted and saved {items.Count()} documents. Documents will be processed automatically by the TransformDocument function.";
+                    }
+                    else{
+                        log.LogInformation("No items retreived from ExtracDocuments call.");
+                        releaseMsg = $"Successful executed the orchestration. No documents retrieved from the Extract endpoint.";
+                    }
 
                     //Release Lock
-                    await context.CallActivityAsync<string>("ReleaseOrchestrationLease", (true, $"Successful extracted and saved {items.Count()} documents. Documents will be processed automatically by the TransformDocument function."));
+                    await context.CallActivityAsync<string>("ReleaseOrchestrationLease", (true, releaseMsg));
                 }
                 else{
                     log.LogInformation("Orchestration lease already in place. Skipping execution.");
